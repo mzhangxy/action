@@ -80,6 +80,18 @@
 
 ![Webhook 配置](https://raw.githubusercontent.com/oyz8/action/refs/heads/main/img/Uptime-Kuma-Webhook%E9%85%8D%E7%BD%AE.png)
 
+
+## 闭环流程
+```
+1. 监控端 Uptime-Kuma 检测 HuggingFace Space 下线
+     ↓
+2. 通过 Webhook 触发 GitHub Actions
+     ↓
+3. GitHub Actions 自动重新部署 项目 到 HuggingFace
+     ↓
+4. 项目 恢复运行 完成闭环
+```
+
 ---
 
 ## 📝 参数说明
