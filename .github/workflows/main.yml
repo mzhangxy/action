@@ -1,0 +1,29 @@
+# .github/workflows/renew.yml
+name: 韩国鸡自动续订
+
+on:
+  workflow_dispatch:
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install playwright requests
+          playwright install chromium
+      
+      - name: Run renew script
+        env:
+          REMEMBER_COOKIE: ${{ secrets.REMEMBER_COOKIE }}
+          SERVER_ID: ${{ secrets.SERVER_ID }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: python scripts/renew.py
