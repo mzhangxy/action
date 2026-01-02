@@ -3,9 +3,9 @@ import os
 import requests
 from playwright.sync_api import sync_playwright
 
-SERVER_ID = os.environ.get("SERVER_ID")
+SERVER_ID = os.environ.get("SERVER_ID", "734ad0d1")
 URL = f"https://hub.weirdhost.xyz/server/{SERVER_ID}/"
-REMEMBER_COOKIE = os.environ.get("REMEMBER_COOKIE")
+WEIRDHOST_COOKIE = os.environ.get("WEIRDHOST_COOKIE")
 TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
 TG_CHAT_ID = os.environ.get("TG_CHAT_ID")
 
@@ -17,8 +17,8 @@ def send_tg(msg):
         )
 
 def main():
-    if not REMEMBER_COOKIE or not SERVER_ID:
-        send_tg("❌ 续期失败: REMEMBER_COOKIE 或 SERVER_ID 未设置")
+    if not WEIRDHOST_COOKIE or not SERVER_ID:
+        send_tg("❌ 续期失败: WEIRDHOST_COOKIE 或 SERVER_ID 未设置")
         exit(1)
     
     with sync_playwright() as p:
@@ -27,7 +27,7 @@ def main():
         
         context.add_cookies([{
             "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
-            "value": REMEMBER_COOKIE,
+            "value": WEIRDHOST_COOKIE,
             "domain": "hub.weirdhost.xyz",
             "path": "/"
         }])
