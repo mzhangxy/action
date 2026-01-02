@@ -17,11 +17,11 @@ from playwright.async_api import async_playwright
 
 # 配置
 DASHBOARD_URL = 'https://dashboard.katabump.com'
-SERVER_ID = os.environ.get('KATA_SERVER_ID') or ''
+SERVER_ID = os.environ.get('KATA_SERVER_ID', '185829') or ''
 KATA_EMAIL = os.environ.get('KATA_EMAIL') or ''
 KATA_PASSWORD = os.environ.get('KATA_PASSWORD') or ''
 TG_BOT_TOKEN = os.environ.get('TG_BOT_TOKEN') or ''
-TG_CHAT_ID = os.environ.get('TG_USER_ID') or ''
+TG_CHAT_ID = os.environ.get('TG_CHAT_ID') or ''
 
 # Capsolver API Key (用于解决 Turnstile 验证码)
 CAPSOLVER_KEY = os.environ.get('CAPSOLVER_KEY') or ''
