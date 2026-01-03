@@ -1,7 +1,7 @@
 name: 韩国鸡自动续订
 on:
   schedule:
-    - cron: '07 21 */5 * *'  # 每5天 UTC 21点07分
+    - cron: '18 4 * * *'  # 每天北京时间 12:18 运行
   workflow_dispatch:      # 支持手动触发
 
 jobs:
