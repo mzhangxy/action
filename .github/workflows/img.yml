@@ -22,15 +22,7 @@ jobs:
       
       - name: 安装依赖
         run: |
-          pip install --upgrade pip
-          pip install \
-            playwright \
-            cloudscraper \
-            beautifulsoup4 \
-            lxml \
-            opencv-python-headless \
-            requests
-          playwright install chromium
+          pip install cloudscraper beautifulsoup4 lxml opencv-python-headless requests
       
       - name: 提交并推送
         env:
