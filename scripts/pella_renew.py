@@ -142,59 +142,57 @@ class PellaAutoRenew:
         except Exception as e:
             raise Exception(f"❌ 登录流程失败: {e}")
 
-        # 5. 点击登录按钮 (修复：尝试多种选择器)
+        # 5. 点击登录按钮
         try:
-            logger.info("⏳ 等待 2 秒...")
-            time.sleep(2)
+            logger.info("⏳ 等待 3 秒让按钮激活...")
+            time.sleep(3)
 
             logger.info("🔍 查找登录按钮...")
             
+            # 使用精确的选择器
             button_selectors = [
-                "//button[contains(., 'Continue')]",
-                "//button[contains(., 'Sign in')]",
-                "//button[contains(., 'Log in')]",
-                "//button[@type='submit']",
-                "//button[contains(@class, 'cl-formButtonPrimary')]"
+                # 精确匹配 Clerk 按钮
+                "button.cl-formButtonPrimary",
+                "button[data-localization-key='formButtonPrimary']",
+                # 文本在 span 内的情况
+                "//button[.//span[contains(text(), 'Continue')]]",
+                "//button[contains(@class, 'cl-formButtonPrimary')]",
+                # 备用
+                "button[type='submit']",
+                "form button"
             ]
             
             login_btn = None
+            
             for selector in button_selectors:
                 try:
-                    login_btn = WebDriverWait(self.driver, 3).until(
-                        EC.presence_of_element_located((By.XPATH, selector))
-                    )
+                    if selector.startswith("//"):
+                        # XPath
+                        login_btn = WebDriverWait(self.driver, 3).until(
+                            EC.element_to_be_clickable((By.XPATH, selector))
+                        )
+                    else:
+                        # CSS
+                        login_btn = WebDriverWait(self.driver, 3).until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+                        )
                     logger.info(f"✅ 找到按钮: {selector}")
                     break
                 except:
                     continue
             
-            if not login_btn:
-                all_buttons = self.driver.find_elements(By.TAG_NAME, "button")
-                logger.info(f"🔍 遍历 {len(all_buttons)} 个按钮...")
-                for btn in all_buttons:
-                    btn_text = btn.text.strip().lower()
-                    if btn_text in ['continue', 'sign in', 'log in', 'submit']:
-                        login_btn = btn
-                        logger.info(f"✅ 找到按钮: '{btn_text}'")
-                        break
-            
-            if not login_btn:
+            if login_btn:
+                self.driver.execute_script("arguments[0].scrollIntoView(true);", login_btn)
+                time.sleep(0.5)
+                self.driver.execute_script("arguments[0].click();", login_btn)
+                logger.info("✅ 已点击登录按钮")
+            else:
                 raise Exception("❌ 无法找到登录按钮")
             
-            self.driver.execute_script("arguments[0].click();", login_btn)
-            logger.info("✅ 已点击登录按钮")
-            
         except Exception as e:
-            logger.warning(f"⚠️ 点击失败，尝试提交表单: {e}")
-            try:
-                self.driver.execute_script("""
-                    var forms = document.querySelectorAll('form');
-                    if (forms.length > 0) forms[forms.length - 1].submit();
-                """)
-                logger.info("✅ 表单提交成功")
-            except Exception as e_submit:
-                raise Exception(f"❌ 表单提交失败: {e_submit}")
-
+            logger.warning(f"⚠️ 点击失败: {e}，尝试提交表单")
+            self.driver.execute_script("document.querySelector('form').submit();")
+            
         # 6. 等待登录完成
         try:
             WebDriverWait(self.driver, self.WAIT_TIME_AFTER_LOGIN).until(
