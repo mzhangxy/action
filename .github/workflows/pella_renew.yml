@@ -1,0 +1,46 @@
+name: Pella 自动续期
+
+on:
+  schedule:
+    # 每天 UTC 0点运行（北京时间 8:00）
+    - cron: '0 0 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: 安装 Chrome 浏览器
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+      
+      - name: 安装 Python 依赖
+        run: pip install selenium==4.15.0 requests==2.31.0 webdriver-manager==4.0.1
+      
+      - name: 运行续期脚本
+        env:
+          PELLA_ACCOUNTS: ${{ secrets.PELLA_ACCOUNTS }}
+          PELLA_EMAIL: ${{ secrets.PELLA_EMAIL }}
+          PELLA_PASSWORD: ${{ secrets.PELLA_PASSWORD }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: python pella_renew.py
+      
+      - name: 清理历史运行记录
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
