@@ -1,4 +1,4 @@
-name: Castle-Host 自动续费
+name: Castle-Host 自动续约
 
 on:
   schedule:
