@@ -3,6 +3,7 @@ name: Pella 自动续期
 on:
   schedule:
     - cron: '18 4 * * *'  # 每天北京时间 12:18 运行
+    - cron: '18 5 * * *'  # 每天北京时间 13:18 运行
   workflow_dispatch:  # 允许手动触发
 
 jobs:
@@ -39,7 +40,7 @@ jobs:
         uses: Mattraks/delete-workflow-runs@v2
         with:
           token: ${{ github.token }}
-          repository: ${{ github.repository }}
+          仓库: ${{ github.repository }}
           delete_workflow_pattern: ${{ github.workflow }}
           retain_days: 0
           keep_minimum_runs: 3
