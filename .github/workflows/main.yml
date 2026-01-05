@@ -1,0 +1,43 @@
+name: Castle-Host 自动续期
+
+on:
+  schedule:
+    # 每天北京时间20点运行（UTC时间12点）
+    - cron: '0 12 * * *'
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install playwright aiohttp
+        playwright install chromium
+    
+    - name: Run renewal script
+      env:
+        CASTLE_COOKIES: ${{ secrets.CASTLE_COOKIES }}
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        SERVER_ID: ${{ secrets.SERVER_ID || '117954' }}
+      run: python scripts/castle-host_renew.py
+    
+    - name: Upload logs and screenshots
+      uses: actions/upload-artifact@v3
+      with:
+        name: renewal-artifacts-${{ github.run_id }}
+        path: |
+          *.log
+          *.png
+          *.json
+        retention-days: 7
