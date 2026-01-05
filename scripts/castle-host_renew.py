@@ -44,17 +44,16 @@ logger = logging.getLogger(__name__)
 
 class RenewalStatus(Enum):
     """续约状态枚举"""
-    SUCCESS = "success"           # ✅ 续约成功
-    FAILED = "failed"             # ❌ 续约失败
-    RATE_LIMITED = "rate_limited" # 📝 今日已续期
-    SKIPPED = "skipped"           # 📝 无需续期
-    OTHER = "other"               # 📝 其它
+    SUCCESS = "success"
+    FAILED = "failed"
+    RATE_LIMITED = "rate_limited"
+    SKIPPED = "skipped"
+    OTHER = "other"
 
 # ==================== 数据类 ====================
 
 @dataclass
 class ServerInfo:
-    """服务器信息"""
     server_id: str
     expiry_date: Optional[str] = None
     expiry_formatted: Optional[str] = None
@@ -64,7 +63,6 @@ class ServerInfo:
 
 @dataclass
 class RenewalResult:
-    """续约结果"""
     status: RenewalStatus
     message: str
     new_expiry: Optional[str] = None
@@ -72,7 +70,6 @@ class RenewalResult:
 
 @dataclass
 class RenewalRecord:
-    """续约记录"""
     server_id: str
     renewal_time: str
     before_expiry: str
@@ -81,11 +78,8 @@ class RenewalRecord:
     message: str
     cookie_updated: bool = False
 
-# ==================== 环境变量 ====================
-
 @dataclass
 class Config:
-    """配置信息"""
     cookies: str
     server_id: str
     tg_token: Optional[str]
@@ -97,7 +91,6 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
-        """从环境变量加载配置"""
         return cls(
             cookies=os.environ.get("CASTLE_COOKIES", "").strip(),
             server_id=os.environ.get("SERVER_ID", DEFAULT_SERVER_ID),
@@ -111,8 +104,13 @@ class Config:
 
 # ==================== 工具函数 ====================
 
+def mask_id(server_id: str) -> str:
+    """隐藏ID用于日志: 117954 -> 1***54"""
+    if len(server_id) <= 3:
+        return server_id
+    return f"{server_id[0]}***{server_id[-2:]}"
+
 def convert_date_format(date_str: str) -> str:
-    """DD.MM.YYYY -> YYYY-MM-DD"""
     if not date_str:
         return "Unknown"
     match = re.match(r"(\d{2})\.(\d{2})\.(\d{4})", date_str)
@@ -121,7 +119,6 @@ def convert_date_format(date_str: str) -> str:
     return date_str
 
 def parse_date(date_str: str) -> Optional[datetime]:
-    """解析日期字符串"""
     for fmt in ["%d.%m.%Y", "%Y-%m-%d"]:
         try:
             return datetime.strptime(date_str, fmt)
@@ -130,12 +127,10 @@ def parse_date(date_str: str) -> Optional[datetime]:
     return None
 
 def calculate_days_left(date_str: str) -> Optional[int]:
-    """计算剩余天数"""
     date_obj = parse_date(date_str)
     return (date_obj - datetime.now()).days if date_obj else None
 
 def parse_cookies(cookie_str: str) -> List[Dict]:
-    """解析Cookie字符串"""
     cookies = []
     for part in cookie_str.split(";"):
         part = part.strip()
@@ -150,33 +145,24 @@ def parse_cookies(cookie_str: str) -> List[Dict]:
     return cookies
 
 def analyze_api_error(error_msg: str) -> Tuple[RenewalStatus, str]:
-    """分析API错误信息"""
     error_lower = error_msg.lower()
-    
     if "24 час" in error_lower or "уже продлен" in error_lower:
         return RenewalStatus.RATE_LIMITED, "今日已续期"
     if "недостаточно" in error_lower:
         return RenewalStatus.FAILED, "余额不足"
     if "максимальн" in error_lower:
         return RenewalStatus.FAILED, "已达最大期限"
-    
     return RenewalStatus.FAILED, error_msg
 
 # ==================== 通知模块 ====================
 
 class Notifier:
-    """通知管理器"""
-    
     def __init__(self, tg_token: Optional[str], tg_chat_id: Optional[str]):
         self.tg_token = tg_token
         self.tg_chat_id = tg_chat_id
     
     def build_message(self, server: ServerInfo, result: RenewalResult) -> str:
-        """构建通知消息"""
-        # 状态行
         status_line = self._get_status_line(result)
-        
-        # 使用续约后的到期时间（如果有）
         expiry = convert_date_format(result.new_expiry) if result.new_expiry else server.expiry_formatted
         days = calculate_days_left(result.new_expiry) if result.new_expiry else server.days_left
         
@@ -190,35 +176,25 @@ class Notifier:
 {status_line}"""
     
     def _get_status_line(self, result: RenewalResult) -> str:
-        """获取状态行"""
         if result.status == RenewalStatus.SUCCESS:
-            if result.days_added > 0:
-                return f"✅ 续约成功 (+{result.days_added}天)"
-            return "✅ 续约成功"
+            return f"✅ 续约成功 (+{result.days_added}天)" if result.days_added > 0 else "✅ 续约成功"
         elif result.status == RenewalStatus.FAILED:
             return f"❌ 续约失败: {result.message}"
         elif result.status == RenewalStatus.RATE_LIMITED:
             return "📝 今日已续期"
         elif result.status == RenewalStatus.SKIPPED:
             return "📝 无需续期"
-        else:
-            return f"📝 {result.message}"
+        return f"📝 {result.message}"
     
     async def send(self, message: str) -> bool:
-        """发送Telegram通知"""
         if not self.tg_token or not self.tg_chat_id:
             logger.info("ℹ️ Telegram未配置")
             return False
-        
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     f"https://api.telegram.org/bot{self.tg_token}/sendMessage",
-                    json={
-                        "chat_id": self.tg_chat_id,
-                        "text": message,
-                        "parse_mode": "HTML"
-                    },
+                    json={"chat_id": self.tg_chat_id, "text": message, "parse_mode": "HTML"},
                     timeout=REQUEST_TIMEOUT
                 ) as resp:
                     if resp.status == 200:
@@ -233,8 +209,6 @@ class Notifier:
 # ==================== GitHub模块 ====================
 
 class GitHubSecretsManager:
-    """GitHub Secrets管理器"""
-    
     def __init__(self, repo_token: Optional[str], repository: Optional[str]):
         self.repo_token = repo_token
         self.repository = repository
@@ -245,49 +219,36 @@ class GitHubSecretsManager:
         } if repo_token else {}
     
     async def update_secret(self, name: str, value: str) -> bool:
-        """更新GitHub Secret"""
         if not self.repo_token or not self.repository:
             logger.info("ℹ️ GitHub未配置，跳过Secret更新")
             return False
-        
         try:
             from nacl import encoding, public
         except ImportError:
             logger.error("❌ 缺少pynacl库")
             return False
-        
         try:
             async with aiohttp.ClientSession() as session:
-                # 获取公钥
                 key_url = f"https://api.github.com/repos/{self.repository}/actions/secrets/public-key"
                 async with session.get(key_url, headers=self.headers) as resp:
                     if resp.status != 200:
-                        logger.error(f"❌ 获取公钥失败: {resp.status}")
                         return False
                     key_data = await resp.json()
                 
-                # 加密
-                public_key = public.PublicKey(
-                    key_data["key"].encode("utf-8"),
-                    encoding.Base64Encoder()
-                )
+                public_key = public.PublicKey(key_data["key"].encode("utf-8"), encoding.Base64Encoder())
                 sealed_box = public.SealedBox(public_key)
                 encrypted = sealed_box.encrypt(value.encode("utf-8"))
                 encrypted_value = b64encode(encrypted).decode("utf-8")
                 
-                # 更新
                 secret_url = f"https://api.github.com/repos/{self.repository}/actions/secrets/{name}"
                 async with session.put(
-                    secret_url,
-                    headers=self.headers,
+                    secret_url, headers=self.headers,
                     json={"encrypted_value": encrypted_value, "key_id": key_data["key_id"]}
                 ) as resp:
                     if resp.status in [201, 204]:
                         logger.info(f"✅ Secret {name} 已更新")
                         return True
-                    logger.error(f"❌ 更新Secret失败: {resp.status}")
                     return False
-                    
         except Exception as e:
             logger.error(f"❌ GitHub API异常: {e}")
             return False
@@ -295,8 +256,6 @@ class GitHubSecretsManager:
 # ==================== 浏览器模块 ====================
 
 class CastleHostClient:
-    """Castle-Host客户端"""
-    
     def __init__(self, context: BrowserContext, page: Page, server_id: str):
         self.context = context
         self.page = page
@@ -304,10 +263,8 @@ class CastleHostClient:
         self.url = f"https://cp.castle-host.com/servers/pay/index/{server_id}"
     
     async def get_server_info(self) -> ServerInfo:
-        """获取服务器信息"""
         expiry = await self._extract_expiry()
         balance = await self._extract_balance()
-        
         return ServerInfo(
             server_id=self.server_id,
             expiry_date=expiry,
@@ -318,7 +275,6 @@ class CastleHostClient:
         )
     
     async def _extract_expiry(self) -> Optional[str]:
-        """提取到期时间"""
         try:
             text = await self.page.text_content("body")
             for pattern in [r"(\d{2}\.\d{2}\.\d{4})\s*\([^)]*\)", r"\b(\d{2}\.\d{2}\.\d{4})\b"]:
@@ -330,7 +286,6 @@ class CastleHostClient:
         return None
     
     async def _extract_balance(self) -> str:
-        """提取余额"""
         try:
             text = await self.page.text_content("body")
             match = re.search(r"(\d+\.\d+)\s*₽", text)
@@ -339,7 +294,6 @@ class CastleHostClient:
             return "0.00"
     
     async def renew(self) -> RenewalResult:
-        """执行续约"""
         api_response: Dict = {}
         
         async def capture_response(response):
@@ -351,7 +305,6 @@ class CastleHostClient:
         
         self.page.on("response", capture_response)
         
-        # 查找并点击按钮
         for selector in ["#freebtn", 'button:has-text("Продлить")']:
             button = self.page.locator(selector)
             if await button.count() > 0:
@@ -361,13 +314,11 @@ class CastleHostClient:
                 await button.click()
                 logger.info("🖱️ 已点击续约按钮")
                 
-                # 等待响应
                 for _ in range(20):
                     if api_response.get("data"):
                         break
                     await asyncio.sleep(0.5)
                 
-                # 解析响应
                 if api_response.get("data"):
                     data = api_response["data"]
                     if data.get("status") == "error":
@@ -377,8 +328,6 @@ class CastleHostClient:
                         return RenewalResult(RenewalStatus.SUCCESS, "续期成功")
                 
                 await self.page.wait_for_timeout(3000)
-                
-                # 检查页面
                 text = await self.page.text_content("body")
                 if "24 час" in text:
                     return RenewalResult(RenewalStatus.RATE_LIMITED, "今日已续期")
@@ -388,7 +337,6 @@ class CastleHostClient:
         return RenewalResult(RenewalStatus.FAILED, "未找到续约按钮")
     
     async def verify_renewal(self, original_expiry: str) -> Tuple[Optional[str], int]:
-        """验证续约结果"""
         await asyncio.sleep(2)
         await self.page.reload(wait_until="networkidle")
         await asyncio.sleep(2)
@@ -402,11 +350,9 @@ class CastleHostClient:
             new_date = parse_date(new_expiry)
             if old_date and new_date:
                 return new_expiry, (new_date - old_date).days
-        
         return new_expiry, 0
     
     async def extract_cookies(self) -> Optional[str]:
-        """提取Cookie"""
         try:
             cookies = await self.context.cookies()
             castle_cookies = [c for c in cookies if "castle-host.com" in c.get("domain", "")]
@@ -419,7 +365,6 @@ class CastleHostClient:
 # ==================== 主流程 ====================
 
 async def run_renewal(config: Config) -> None:
-    """执行续约流程"""
     cookies = parse_cookies(config.cookies)
     if not cookies:
         logger.error("❌ Cookie解析失败")
@@ -435,12 +380,10 @@ async def run_renewal(config: Config) -> None:
             headless=True,
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"]
         )
-        
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             viewport={"width": 1920, "height": 1080}
         )
-        
         await context.add_cookies(cookies)
         page = await context.new_page()
         page.set_default_timeout(PAGE_TIMEOUT)
@@ -449,17 +392,15 @@ async def run_renewal(config: Config) -> None:
         record = RenewalRecord(
             server_id=config.server_id,
             renewal_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            before_expiry="",
-            after_expiry="",
-            status="",
-            message=""
+            before_expiry="", after_expiry="", status="", message=""
         )
         
         try:
-            logger.info(f"🌐 访问: {client.url}")
+            # ✅ 日志中隐藏ID
+            masked_id = mask_id(config.server_id)
+            logger.info(f"🌐 访问: https://cp.castle-host.com/servers/pay/index/{masked_id}")
             await page.goto(client.url, wait_until="networkidle")
             
-            # 检查登录
             if "login" in page.url or "auth" in page.url:
                 logger.error("❌ Cookie已失效")
                 result = RenewalResult(RenewalStatus.FAILED, "Cookie已失效")
@@ -469,36 +410,29 @@ async def run_renewal(config: Config) -> None:
             
             logger.info("✅ 登录成功")
             
-            # 获取服务器信息
             server = await client.get_server_info()
             record.before_expiry = server.expiry_date or ""
             logger.info(f"📅 到期: {server.expiry_formatted}, ⏳ 剩余: {server.days_left} 天")
             
-            # 判断是否需要续约
-            if (server.days_left and 
-                server.days_left > config.renew_threshold and 
-                not config.force_renew):
-                
+            if (server.days_left and server.days_left > config.renew_threshold and not config.force_renew):
                 logger.info(f"ℹ️ 剩余 {server.days_left} 天 > {config.renew_threshold} 天，跳过")
                 result = RenewalResult(RenewalStatus.SKIPPED, "无需续期")
                 record.after_expiry = server.expiry_date or ""
                 record.status = result.status.value
                 record.message = result.message
-                # 不发送通知
                 
+                # ✅ 无需续期也发送通知
+                message = notifier.build_message(server, result)
+                await notifier.send(message)
             else:
-                # 执行续约
                 result = await client.renew()
                 
-                # 验证结果
                 if result.status in [RenewalStatus.SUCCESS, RenewalStatus.OTHER]:
                     new_expiry, days_added = await client.verify_renewal(server.expiry_date or "")
-                    
                     if new_expiry and days_added > 0:
                         result = RenewalResult(RenewalStatus.SUCCESS, "续约成功", new_expiry, days_added)
                     elif result.status == RenewalStatus.OTHER:
                         result = RenewalResult(RenewalStatus.RATE_LIMITED, "今日已续期")
-                    
                     record.after_expiry = new_expiry or server.expiry_date or ""
                 else:
                     record.after_expiry = server.expiry_date or ""
@@ -506,17 +440,14 @@ async def run_renewal(config: Config) -> None:
                 record.status = result.status.value
                 record.message = result.message
                 
-                # 发送通知
                 message = notifier.build_message(server, result)
                 await notifier.send(message)
             
-            # 更新Cookie
             new_cookies = await client.extract_cookies()
             if new_cookies and new_cookies != config.cookies:
                 logger.info("🔄 Cookie已变化")
                 record.cookie_updated = await github_mgr.update_secret("CASTLE_COOKIES", new_cookies)
             
-            # 保存记录
             with open(HISTORY_FILE, "a", encoding="utf-8") as f:
                 json.dump(asdict(record), f, ensure_ascii=False)
                 f.write("\n")
@@ -526,20 +457,17 @@ async def run_renewal(config: Config) -> None:
             result = RenewalResult(RenewalStatus.FAILED, str(e))
             server = ServerInfo(config.server_id, url=client.url)
             await notifier.send(notifier.build_message(server, result))
-            
         finally:
             await context.close()
             await browser.close()
             logger.info("👋 完成")
 
 async def main():
-    """入口函数"""
     logger.info("=" * 50)
     logger.info("Castle-Host 自动续约")
     logger.info("=" * 50)
     
     config = Config.from_env()
-    
     if not config.cookies:
         logger.error("❌ 未设置 CASTLE_COOKIES")
         sys.exit(1)
