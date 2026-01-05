@@ -19,11 +19,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install playwright aiohttp beautifulsoup4
-          playwright install --with-deps chromium
+          pip install playwright aiohttp pynacl
+          playwright install chromium
+          playwright install-deps chromium
 
       - name: Run Castle-Host renewal script
         env:
@@ -40,8 +40,11 @@ jobs:
           # 自动更新 Secrets（可选，需配置 REPO_TOKEN）
           REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          RENEW_THRESHOLD: '3'
+          FORCE_RENEW: ${{ github.event.inputs.force_renew || 'false' }}
+          
         run: |
-          # 切换到脚本目录并运行
+          # 运行脚本
           python scripts/castle-host_renew.py
 
       - name: 清理工作流记录
