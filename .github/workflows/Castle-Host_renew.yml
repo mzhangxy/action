@@ -31,7 +31,7 @@ jobs:
           CASTLE_COOKIES: ${{ secrets.CASTLE_COOKIES }}
           
           # 服务器配置
-          SERVER_ID: ${{ secrets.SERVER_ID || '117954' }}
+          SERVER_ID: ${{ secrets.CASTLE_SERVER_ID || '117987' }}
           
           # Telegram 通知（可选）
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
