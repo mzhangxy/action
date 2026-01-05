@@ -1,0 +1,74 @@
+name: Castle-Host 自动续费
+
+on:
+  schedule:
+    - cron: '18 4 * * *'  # 每天北京时间 12:18 运行（UTC 4:18）
+  workflow_dispatch:      # 支持手动触发
+
+jobs:
+  add_time:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            playwright==1.44.0 \
+            aiohttp==3.9.5 \
+            pynacl==1.5.0 \
+            asyncio \
+            urllib3==2.2.1 \
+            beautifulsoup4==4.12.3 \
+            lxml==5.2.1
+          
+          # 安装 Playwright 浏览器
+          playwright install --with-deps chromium
+
+      - name: Run Castle-Host renewal script
+        env:
+          # Castle-Host 认证（必需）
+          CASTLE_COOKIES: ${{ secrets.CASTLE_COOKIES }}
+          
+          # 服务器配置
+          SERVER_ID: ${{ secrets.SERVER_ID || '117954' }}
+          
+          # Telegram 通知（可选）
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          
+          # 自动更新 Secrets（可选，需配置 REPO_TOKEN）
+          REPO_TOKEN: ${{ secrets.REPO_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # 切换到脚本目录并运行
+          python scripts/castle_renew_enhanced.py
+
+      - name: 清理工作流记录
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          delete_workflow_pattern: ${{ github.workflow }}
+          retain_days: 0
+          keep_minimum_runs: 3
+
+      - name: Upload logs and screenshots
+        if: always()  # 无论成功失败都上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: renewal-artifacts-${{ github.run_id }}
+          path: |
+            *.log
+            *.png
+            *.json
+          retention-days: 7
