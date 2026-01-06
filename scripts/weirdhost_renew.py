@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-weirdhost-auto - main.py
-功能：自动续期（两次点击：第一次触发CF，第二次真正续期）
-"""
+
 import os
 import asyncio
 import aiohttp
@@ -232,7 +229,6 @@ async def find_renew_button(page):
 
 
 async def add_server_time():
-
     server_url = os.environ.get("SERVER_URL", DEFAULT_SERVER_URL)
     cookie_value = os.environ.get("REMEMBER_WEB_COOKIE", "").strip()
     cookie_name = os.environ.get("REMEMBER_WEB_COOKIE_NAME", DEFAULT_COOKIE_NAME)
@@ -325,6 +321,16 @@ async def add_server_time():
                 await page.screenshot(path="cf_timeout.png", full_page=True)
                 await tg_notify_photo("cf_timeout.png", msg)
                 return
+
+            print("⏳ 等待复选框...")
+            # 等待并点击复选框
+            try:
+                checkbox = await page.wait_for_selector('input[type="checkbox"]', timeout=10000)
+                await checkbox.click()
+                print("✅ 已点击复选框")
+                await page.wait_for_timeout(3000)
+            except:
+                print("⚠️ 未找到复选框，继续...")
 
             print("⏳ 等待页面恢复...")
             await page.wait_for_timeout(8000)
