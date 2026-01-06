@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 weirdhost-auto - main.py
-功能：自动续期 + 智能通知
+功能：自动续期 + 智能通知（支持 Cloudflare 验证等待）
 """
 import os
 import asyncio
@@ -78,6 +78,70 @@ def is_cooldown_error(error_detail: str) -> bool:
         "already renewed"
     ]
     return any(kw in error_detail.lower() for kw in keywords)
+
+
+# ================== Cloudflare 验证等待 ==================
+async def wait_for_cloudflare(page, max_wait: int = 30) -> bool:
+    """等待 Cloudflare 验证完成"""
+    print("🔄 检查 Cloudflare 验证...")
+    
+    for i in range(max_wait):
+        # 检查是否在 CF 验证页面
+        cf_indicators = [
+            "Checking your browser",
+            "Just a moment",
+            "Verifying you are human",
+            "cf-spinner",
+            "challenge-running"
+        ]
+        
+        page_content = await page.content()
+        is_cf_page = any(indicator in page_content for indicator in cf_indicators)
+        
+        if not is_cf_page:
+            # 额外检查 URL 是否正常
+            if "/cdn-cgi/" not in page.url and "challenge" not in page.url:
+                print(f"✅ Cloudflare 验证通过 ({i+1}秒)")
+                return True
+        
+        print(f"⏳ 等待 CF 验证... ({i+1}/{max_wait}秒)")
+        await page.wait_for_timeout(1000)
+    
+    print("⚠️ Cloudflare 验证超时")
+    return False
+
+
+async def wait_for_page_ready(page, max_wait: int = 15) -> bool:
+    """等待页面完全加载和交互就绪"""
+    print("🔄 等待页面就绪...")
+    
+    for i in range(max_wait):
+        try:
+            # 检查页面是否有正常内容
+            ready = await page.evaluate("""
+                () => {
+                    // 检查是否有续期按钮
+                    const hasButton = document.querySelector('button') !== null;
+                    // 检查是否有服务器信息
+                    const hasContent = document.body.innerText.length > 100;
+                    // 检查没有加载中状态
+                    const noSpinner = !document.body.innerText.includes('Loading');
+                    return hasButton && hasContent && noSpinner;
+                }
+            """)
+            
+            if ready:
+                print(f"✅ 页面就绪 ({i+1}秒)")
+                await page.wait_for_timeout(2000)  # 额外等待2秒确保稳定
+                return True
+                
+        except Exception as e:
+            pass
+        
+        await page.wait_for_timeout(1000)
+    
+    print("⚠️ 页面加载超时")
+    return False
 
 
 # ================== GitHub Secrets 更新 ==================
@@ -210,7 +274,9 @@ async def add_server_time():
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context()
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
         page = await context.new_page()
         page.set_default_timeout(120000)
 
@@ -238,9 +304,28 @@ async def add_server_time():
                 "path": "/",
             }])
 
+            print(f"🌐 访问: {server_url}")
             await page.goto(server_url, timeout=90000)
-            await page.wait_for_load_state("networkidle", timeout=30000)
+            
+            # ========== 2. 等待 Cloudflare 验证 ==========
+            cf_passed = await wait_for_cloudflare(page, max_wait=45)
+            if not cf_passed:
+                await page.screenshot(path="cf_timeout.png", full_page=True)
+                msg = """🎁 <b>Weirdhost 续订报告</b>
 
+⚠️ Cloudflare 验证超时
+💡 请稍后重试"""
+                await tg_notify_photo("cf_timeout.png", msg)
+                return
+
+            # ========== 3. 等待页面完全加载 ==========
+            await page.wait_for_load_state("networkidle", timeout=30000)
+            page_ready = await wait_for_page_ready(page, max_wait=20)
+            
+            if not page_ready:
+                print("⚠️ 页面加载不完整，继续尝试...")
+
+            # 检查是否登录成功
             if "/auth/login" in page.url or "/login" in page.url:
                 msg = """🎁 <b>Weirdhost 续订报告</b>
 
@@ -253,19 +338,34 @@ async def add_server_time():
 
             print("✅ 登录成功")
 
-            # ========== 2. 获取当前到期时间 ==========
+            # ========== 4. 获取当前到期时间 ==========
             expiry_time = await get_expiry_time(page)
             remaining_time = calculate_remaining_time(expiry_time)
             print(f"📅 到期时间: {expiry_time} | 剩余: {remaining_time}")
 
-            # ========== 3. 查找并点击续期按钮 ==========
-            add_button = page.locator('button:has-text("시간추가")')
-            if await add_button.count() == 0:
-                add_button = page.locator('button:has-text("Add Time")')
-            if await add_button.count() == 0:
-                add_button = page.locator('button:has-text("Renew")')
+            # ========== 5. 查找续期按钮 ==========
+            print("🔍 查找续期按钮...")
+            
+            # 多种方式查找按钮
+            selectors = [
+                'button:has-text("시간추가")',
+                'button:has-text("Add Time")',
+                'button:has-text("Renew")',
+                'text=시간추가',
+            ]
+            
+            add_button = None
+            for selector in selectors:
+                try:
+                    locator = page.locator(selector)
+                    if await locator.count() > 0:
+                        add_button = locator.nth(0)
+                        print(f"✅ 找到按钮: {selector}")
+                        break
+                except:
+                    continue
 
-            if await add_button.count() == 0:
+            if not add_button:
                 msg = f"""🎁 <b>Weirdhost 续订报告</b>
 
 ⚠️ 未找到续期按钮
@@ -276,24 +376,35 @@ async def add_server_time():
                 await tg_notify_photo("no_button.png", msg)
                 return
 
+            # ========== 6. 等待按钮可点击后点击 ==========
+            print("⏳ 等待按钮可点击...")
+            await add_button.wait_for(state="visible", timeout=10000)
+            await page.wait_for_timeout(2000)  # 额外等待确保稳定
+            
             # 点击续期
-            await add_button.nth(0).click()
+            await add_button.click()
             print("🔄 已点击续期按钮")
 
-            # 等待 API 响应
-            for _ in range(15):
+            # ========== 7. 等待 API 响应（增加等待时间）==========
+            print("⏳ 等待 API 响应...")
+            for i in range(30):  # 最多等待30秒
                 await page.wait_for_timeout(1000)
                 if renew_result["captured"]:
+                    print(f"✅ 捕获到响应 ({i+1}秒)")
                     break
+                if i % 5 == 4:
+                    print(f"⏳ 仍在等待... ({i+1}秒)")
 
-            # ========== 4. 根据响应发送通知 ==========
+            # ========== 8. 根据响应发送通知 ==========
             if renew_result["captured"]:
                 status = renew_result["status"]
                 body = renew_result["body"]
 
                 if status in (200, 201, 204):
                     # ✅ 续期成功
+                    await page.wait_for_timeout(2000)
                     await page.reload()
+                    await wait_for_cloudflare(page, max_wait=30)
                     await page.wait_for_load_state("networkidle", timeout=30000)
                     new_expiry = await get_expiry_time(page)
                     new_remaining = calculate_remaining_time(new_expiry)
@@ -355,12 +466,14 @@ async def add_server_time():
 ⚠️ 未检测到 API 响应
 📅 到期时间: {expiry_time}
 ⏳ 剩余时间: {remaining_time}
-🔗 {server_url}"""
+🔗 {server_url}
+
+💡 可能是网络延迟，请检查服务器状态"""
                 
                 await page.screenshot(path="no_response.png", full_page=True)
                 await tg_notify_photo("no_response.png", msg)
 
-            # ========== 5. 更新 Cookie ==========
+            # ========== 9. 更新 Cookie ==========
             new_name, new_value = await extract_remember_cookie(context)
             if new_value and new_value != cookie_value:
                 print("🔄 检测到新 Cookie，正在更新...")
