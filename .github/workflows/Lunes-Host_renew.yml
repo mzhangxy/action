@@ -1,4 +1,4 @@
-name: Lunes Host 自动启动
+name: Lunes Host 登录
 on:
   schedule:
     - cron: '15 4 */5 * *'  # 每5天北京时间 12:15 运行
