@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Castle-Host 自动续约脚本
+- 多账号支持（逗号分隔）
+- 自动获取服务器ID
+- 自动启动关机服务器
+- 自动续约
+"""
 
 import os
 import sys
@@ -36,6 +43,7 @@ class ServerResult:
     status: RenewalStatus
     message: str
     expiry: str = ""
+    days: int = 0
     started: bool = False
 
 @dataclass
@@ -56,6 +64,10 @@ class Config:
             repo_token=os.environ.get("REPO_TOKEN"),
             repository=os.environ.get("GITHUB_REPOSITORY")
         )
+
+def mask_id(sid: str) -> str:
+    """隐藏ID: 117987 -> 1***87"""
+    return f"{sid[0]}***{sid[-2:]}" if len(sid) > 3 else sid
 
 def convert_date(s: str) -> str:
     m = re.match(r"(\d{2})\.(\d{2})\.(\d{4})", s) if s else None
@@ -102,6 +114,26 @@ class Notifier:
         except Exception as e:
             logger.error(f"❌ 通知异常: {e}")
         return False
+    
+    async def send_file(self, content: str, filename: str, caption: str = "") -> bool:
+        """发送txt文件"""
+        if not self.token or not self.chat_id:
+            return False
+        try:
+            async with aiohttp.ClientSession() as s:
+                data = aiohttp.FormData()
+                data.add_field('chat_id', self.chat_id)
+                data.add_field('document', content.encode('utf-8'), filename=filename, content_type='text/plain')
+                if caption:
+                    data.add_field('caption', caption)
+                async with s.post(f"https://api.telegram.org/bot{self.token}/sendDocument",
+                    data=data, timeout=REQUEST_TIMEOUT) as r:
+                    if r.status == 200:
+                        logger.info("✅ 文件已发送")
+                        return True
+        except Exception as e:
+            logger.error(f"❌ 文件发送异常: {e}")
+        return False
 
 class GitHubManager:
     def __init__(self, token: Optional[str], repo: Optional[str]):
@@ -142,7 +174,9 @@ class CastleClient:
             match = re.search(r'var\s+ServersID\s*=\s*\[([\d,\s]+)\]', content)
             if match:
                 ids = [x.strip() for x in match.group(1).split(",") if x.strip()]
-                logger.info(f"📋 找到 {len(ids)} 个服务器: {ids}")
+                # 日志中隐藏ID
+                masked = [mask_id(x) for x in ids]
+                logger.info(f"📋 找到 {len(ids)} 个服务器: {masked}")
                 return ids
         except Exception as e:
             logger.error(f"❌ 获取服务器ID失败: {e}")
@@ -150,17 +184,18 @@ class CastleClient:
     
     async def start_if_stopped(self, sid: str) -> bool:
         """如果服务器关机则启动"""
+        masked = mask_id(sid)
         try:
             if "/servers" not in self.page.url:
                 await self.page.goto(f"{self.base}/servers", wait_until="networkidle")
             btn = self.page.locator(f'button[onclick*="sendAction({sid},\'start\')"]')
             if await btn.count() > 0:
-                logger.info(f"🔴 服务器 {sid} 已关机，启动中...")
+                logger.info(f"🔴 服务器 {masked} 已关机，启动中...")
                 await btn.click()
                 await self.page.wait_for_timeout(5000)
-                logger.info(f"🟢 服务器 {sid} 已启动")
+                logger.info(f"🟢 服务器 {masked} 已启动")
                 return True
-            logger.info(f"✅ 服务器 {sid} 运行中")
+            logger.info(f"✅ 服务器 {masked} 运行中")
         except Exception as e:
             logger.error(f"❌ 启动服务器失败: {e}")
         return False
@@ -177,6 +212,7 @@ class CastleClient:
     
     async def renew(self, sid: str) -> Tuple[RenewalStatus, str]:
         """执行续约"""
+        masked = mask_id(sid)
         api_resp: Dict = {}
         
         async def capture(resp):
@@ -194,7 +230,7 @@ class CastleClient:
                 btn = self.page.locator(sel).first
                 if await btn.count() > 0 and await btn.is_visible():
                     await btn.click()
-                    logger.info(f"🖱️ 服务器 {sid} 已点击续约")
+                    logger.info(f"🖱️ 服务器 {masked} 已点击续约")
                     
                     for _ in range(20):
                         if api_resp.get("data"):
@@ -226,15 +262,17 @@ class CastleClient:
         except:
             return None
 
-async def process_account(cookie_str: str, idx: int, config: Config, notifier: Notifier) -> Optional[str]:
-    """处理单个账号"""
+async def process_account(cookie_str: str, idx: int, config: Config, notifier: Notifier) -> Tuple[Optional[str], List[str]]:
+    """处理单个账号，返回(新Cookie, 启动的服务器ID列表)"""
     cookies = parse_cookies(cookie_str)
     if not cookies:
         logger.error(f"❌ 账号#{idx+1} Cookie解析失败")
-        return None
+        return None, []
     
     logger.info(f"{'='*50}")
     logger.info(f"📌 处理账号 #{idx+1}")
+    
+    started_servers: List[str] = []  # 记录启动的服务器
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--no-sandbox"])
@@ -249,57 +287,63 @@ async def process_account(cookie_str: str, idx: int, config: Config, notifier: N
         results: List[ServerResult] = []
         
         try:
-            # 获取服务器列表
             server_ids = await client.get_server_ids()
             if not server_ids:
                 if "login" in page.url:
                     logger.error(f"❌ 账号#{idx+1} Cookie已失效")
                     await notifier.send(f"❌ 账号#{idx+1} Cookie已失效")
-                return None
+                return None, []
             
-            # 处理每个服务器
             for sid in server_ids:
-                logger.info(f"--- 处理服务器 {sid} ---")
+                masked = mask_id(sid)
+                logger.info(f"--- 处理服务器 {masked} ---")
                 
-                # 1. 先启动（如果关机）
                 started = await client.start_if_stopped(sid)
+                if started:
+                    started_servers.append(sid)
                 
-                # 2. 获取到期时间
                 expiry = await client.get_expiry(sid)
-                logger.info(f"📅 到期: {convert_date(expiry)} ({days_left(expiry)}天)")
+                d = days_left(expiry)
+                logger.info(f"📅 到期: {convert_date(expiry)} ({d}天)")
                 
-                # 3. 续约
                 status, msg = await client.renew(sid)
                 logger.info(f"📝 结果: {msg}")
                 
-                results.append(ServerResult(sid, status, msg, expiry, started))
+                results.append(ServerResult(sid, status, msg, expiry, d, started))
                 await asyncio.sleep(2)
             
-            # 发送通知
-            if results:
-                lines = [f"🎁 Castle-Host 续约通知\n👤 账号: #{idx+1}\n"]
-                for r in results:
-                    st = "🟢启动 " if r.started else ""
-                    if r.status == RenewalStatus.SUCCESS:
-                        stat = "✅成功"
-                    elif r.status == RenewalStatus.RATE_LIMITED:
-                        stat = "📝今日已续"
-                    else:
-                        stat = f"❌{r.message}"
-                    lines.append(f"💻 {r.server_id} | {convert_date(r.expiry)} | {st}{stat}")
-                await notifier.send("\n".join(lines))
+            # 发送详细通知
+            for r in results:
+                if r.status == RenewalStatus.SUCCESS:
+                    stat = "✅ 续约成功 (+1天)"
+                elif r.status == RenewalStatus.RATE_LIMITED:
+                    stat = "📝 今日已续期"
+                else:
+                    stat = f"❌ 续约失败: {r.message}"
+                
+                started_line = "🟢 服务器已启动\n" if r.started else ""
+                
+                msg = f"""🎁 Castle-Host 自动续约通知
+
+👤 账号: #{idx+1}
+💻 服务器: {r.server_id}
+📅 到期时间: {convert_date(r.expiry)}
+⏳ 剩余天数: {r.days} 天
+🔗 https://cp.castle-host.com/servers/pay/index/{r.server_id}
+
+{started_line}{stat}"""
+                await notifier.send(msg)
             
-            # 返回新Cookie
             new_cookie = await client.extract_cookies()
             if new_cookie and new_cookie != cookie_str:
                 logger.info(f"🔄 账号#{idx+1} Cookie已变化")
-                return new_cookie
-            return cookie_str
+                return new_cookie, started_servers
+            return cookie_str, started_servers
             
         except Exception as e:
             logger.error(f"❌ 账号#{idx+1} 异常: {e}")
             await notifier.send(f"❌ 账号#{idx+1} 异常: {e}")
-            return None
+            return None, []
         finally:
             await ctx.close()
             await browser.close()
@@ -321,9 +365,11 @@ async def main():
     
     new_cookies = []
     changed = False
+    all_started: List[str] = []  # 所有启动的服务器
     
     for i, cookie in enumerate(config.cookies_list):
-        new = await process_account(cookie, i, config, notifier)
+        new, started = await process_account(cookie, i, config, notifier)
+        all_started.extend(started)
         if new:
             new_cookies.append(new)
             if new != cookie:
@@ -333,6 +379,14 @@ async def main():
         
         if i < len(config.cookies_list) - 1:
             await asyncio.sleep(5)
+    
+    # 如果有服务器启动，发送txt文件
+    if all_started:
+        content = "Castle-Host 已启动的服务器\n" + "=" * 30 + "\n\n"
+        for sid in all_started:
+            content += f"服务器ID: {sid}\n"
+            content += f"控制面板: https://cp.castle-host.com/servers/control/index/{sid}\n\n"
+        await notifier.send_file(content, "castle-host-started.txt", "🟢 已启动的服务器列表")
     
     if changed:
         await github.update_secret("CASTLE_COOKIES", ",".join(new_cookies))
