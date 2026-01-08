@@ -2,7 +2,7 @@ name: 图片爬虫
 
 on:
   schedule:
-    - cron: '30 4 * * *'  # 每天北京时间 12:18 运行
+   # - cron: '30 4 * * *'  # 每天北京时间 12:18 运行
   workflow_dispatch:
 
 jobs:
